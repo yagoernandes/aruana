@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	_ "image/png"
 	"log"
+	"math"
+	"os"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
-	"github.com/hajimehoshi/ebiten/v2/examples/resources/images"
 )
 
 const (
@@ -26,12 +26,28 @@ var (
 )
 
 func init() {
-	// Decode an image from the image file's byte slice.
-	img, _, err := image.Decode(bytes.NewReader(images.Tiles_png))
+	// Abre o arquivo tiles.png local
+	file, err := os.Open("assets/tiles.png")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Decodifica a imagem
+	img, _, err := image.Decode(file)
 	if err != nil {
 		log.Fatal(err)
 	}
 	tilesImage = ebiten.NewImageFromImage(img)
+}
+
+type Character struct {
+	x        float64
+	y        float64
+	targetX  float64
+	targetY  float64
+	speed    float64
+	isMoving bool
 }
 
 type Game struct {
@@ -44,6 +60,7 @@ type Game struct {
 	lastMouseX int
 	lastMouseY int
 	zoom       float64
+	character  Character
 }
 
 func (g *Game) Update() error {
@@ -53,24 +70,31 @@ func (g *Game) Update() error {
 	// Verifica se o botão esquerdo do mouse está pressionado
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		if !g.isDragging {
-			g.isDragging = true
-			g.lastMouseX = g.mouseX
-			g.lastMouseY = g.mouseY
-		} else {
-			// Calcula o deslocamento do mouse
-			dx := g.lastMouseX - g.mouseX
-			dy := g.lastMouseY - g.mouseY
+			// Converte a posição do mouse para coordenadas do mundo
+			worldX := (float64(g.mouseX) + g.cameraX) / g.zoom
+			worldY := (float64(g.mouseY) + g.cameraY) / g.zoom
 
-			// Move a câmera
-			g.cameraX += float64(dx)
-			g.cameraY += float64(dy)
-
-			// Atualiza a última posição do mouse
-			g.lastMouseX = g.mouseX
-			g.lastMouseY = g.mouseY
+			// Define o alvo do personagem
+			g.character.targetX = worldX
+			g.character.targetY = worldY
+			g.character.isMoving = true
 		}
-	} else {
-		g.isDragging = false
+	}
+
+	// Atualiza a posição do personagem
+	if g.character.isMoving {
+		dx := g.character.targetX - g.character.x
+		dy := g.character.targetY - g.character.y
+		distance := math.Sqrt(dx*dx + dy*dy)
+
+		if distance < 1.0 {
+			g.character.x = g.character.targetX
+			g.character.y = g.character.targetY
+			g.character.isMoving = false
+		} else {
+			g.character.x += dx * 0.05
+			g.character.y += dy * 0.05
+		}
 	}
 
 	// Detecta o scroll do mouse para zoom
@@ -127,9 +151,20 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 	}
 
+	// Desenha o personagem
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(g.character.x, g.character.y)
+	op.GeoM.Scale(g.zoom, g.zoom)
+	op.GeoM.Translate(-g.cameraX, -g.cameraY)
+
+	// Usa o tile 26 para representar o personagem (um personagem mais visível)
+	sx := (26 % tileXCount) * tileSize
+	sy := (26 / tileXCount) * tileSize
+	screen.DrawImage(tilesImage.SubImage(image.Rect(sx, sy, sx+tileSize, sy+tileSize)).(*ebiten.Image), op)
+
 	// Mostra informações de debug
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("TPS: %0.2f\nCamera: (%.1f, %.1f)\nMouse: (%d, %d)\nZoom: %.2f",
-		ebiten.ActualTPS(), g.cameraX, g.cameraY, g.mouseX, g.mouseY, g.zoom))
+	ebitenutil.DebugPrint(screen, fmt.Sprintf("TPS: %0.2f\nCamera: (%.1f, %.1f)\nMouse: (%d, %d)\nZoom: %.2f\nCharacter: (%.1f, %.1f)",
+		ebiten.ActualTPS(), g.cameraX, g.cameraY, g.mouseX, g.mouseY, g.zoom, g.character.x, g.character.y))
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -178,7 +213,13 @@ func main() {
 				0, 0, 0, 0, 0, 0, 0, 245, 242, 0, 0, 0, 0, 0, 0,
 			},
 		},
-		zoom: 1.0, // Inicializa o zoom em 1.0
+		zoom: 1.0,
+		character: Character{
+			x:        100,
+			y:        100,
+			speed:    2.0,
+			isMoving: false,
+		},
 	}
 
 	ebiten.SetWindowSize(screenWidth*2, screenHeight*2)
